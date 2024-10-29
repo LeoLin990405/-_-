@@ -1,0 +1,257 @@
+---
+title: "ST346 Generalized Linear Models for Regression and Classification - Coursework 1"
+author: "2207969"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex
+header-includes:
+   - \usepackage{unicode-math}
+   - \usepackage{amsmath}
+   - \usepackage{amssymb}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(ggplot2)
+library(tidyverse)
+```
+
+# Data Loading and Exploration
+
+```{r data-loading}
+# Load the dataset
+load("CourseworkData1.rda")
+```
+
+# Question 1: Weighted Regression
+
+## Part a: Data Visualization
+
+```{r q1a-visualization}
+# Visualize the relationship between team size and offices cleaned
+plot <- ggplot(data=cleaners, aes(x = Staff, y = Offices)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Relationship between Team Size and Offices Cleaned",
+       x = "Number of Staff",
+       y = "Number of Offices Cleaned") +
+  theme_minimal()
+print(plot)
+
+# Calculate correlation
+correlation <- cor(cleaners$Staff, cleaners$Offices)
+print(paste("Correlation coefficient:", round(correlation, 3)))
+summary(cleaners)
+```
+
+The scatter plot shows a positive correlation between team size and offices cleaned. As the number of staff increases, the number of offices cleaned also increases. The correlation coefficient is 0.926, very close to 1, showing a strong positive relation. It is reasonable to assume a linear relationship.
+
+## Part b: Linear Model Fitting
+
+```{r q1b-linear-model}
+# Fit a normal linear model and interpret the slope coefficient
+model <- lm(Offices ~ Staff, data = cleaners)
+summary(model)
+slope <- coef(model)["Staff"]
+print(paste("Slope coefficient:", round(slope, 3)))
+```
+
+The slope coefficient is 3.7, meaning on average for each additional cleaner, 3.7 offices can be cleaned.
+
+## Part c: Residual Analysis
+
+```{r q1c-residual-analysis}
+# Produce and evaluate a residuals versus fitted values plot
+plot(model, which=1)
+```
+
+The smoother resembles a horizontal line at zero. However, the residual plot resembles a 'right-opening megaphone'. The variation of the residuals is increasing with fitted value. It violates the assumption of homoscedasticity.
+
+## Part d: Variance Estimation Table
+
+```{r q1d-variance-estimation}
+variance_table <- aggregate(Offices ~ Staff, data = cleaners, FUN = var)
+names(variance_table) <- c("Team_size_x", "Variance")
+variance_table$Variance <- round(variance_table$Variance, 2)
+print(variance_table)
+```
+
+This produces the same variance estimates as given in the question.
+
+## Part e: Weight Calculation
+
+Derivation of weight expression:
+
+Since we assume that $w_i = 1$ for $x_i = 2$ and $Var(Y_i | x_i) = Var(Y_j | x_j)$ if $x_i = x_j$,
+
+$$Var(Y_i|x_i)=\phi/w_i$$
+$$w_i=\phi/Var(Y_i|x_i)$$
+$$Var(Y_i|x=2)=\phi/1=\phi$$
+$$w_i = \frac{\phi / \text{Var}(Y_i | x_i)}{\phi / \text{Var}(Y | x = 2)} = \frac{\text{Var}(Y | x = 2)}{\text{Var}(Y_i | x_i)}$$
+
+```{r q1e-weight-calculation}
+# Use the derived expression to compute estimates
+base_variance <- variance_table$Variance[variance_table$Team_size_x == 2]
+variance_table$Weight <- base_variance / variance_table$Variance
+print(variance_table)
+
+assign_weight <- function(staff_size) {
+  weight <- variance_table$Weight[variance_table$Team_size_x == staff_size]
+  return(weight)
+}
+
+cleaners$Weight <- sapply(cleaners$Staff, assign_weight)
+head(cleaners)
+summary(cleaners$Weight)
+```
+
+## Part f: Weighted Linear Model
+
+```{r q1f-weighted-model}
+# Model summary
+weighted_model <- lm(Offices ~ Staff, data = cleaners, weights = Weight)
+summary(weighted_model)
+
+# Weighted residual plot
+plot(weighted_model, which=1)
+```
+
+The smoother resembles a horizontal line at zero. No clear 'right-opening megaphone' pattern. The variation of the residuals is rather stable with fitted value. It follows the assumption of homoscedasticity and linearity. The slope coefficient is 3.826, meaning on average for each additional cleaner, 3.826 offices can be cleaned. It is higher than that of the unweighted model, suggesting the unweighted model underestimates the impact of staff number. Overall, the weighted model is more suitable for this dataset.
+
+## Part g: Transformed Model
+
+```{r q1g-transformed-model}
+# Transform the model
+cleaners$Y_star <- cleaners$Offices * sqrt(cleaners$Weight)
+cleaners$x_star <- cleaners$Staff * sqrt(cleaners$Weight)
+cleaners$intercept_star <- sqrt(cleaners$Weight)
+transformed_model <- lm(Y_star ~ 0 + intercept_star + x_star, data = cleaners)
+
+# Report model summary
+summary(transformed_model)
+cat("Transformed model coefficients:\n")
+print(coef(transformed_model))
+cat("\nWeighted model coefficients:\n")
+print(coef(weighted_model))
+cat("\nTransformed model standard errors:\n")
+print(sqrt(diag(vcov(transformed_model))))
+cat("\nWeighted model standard errors:\n")
+print(sqrt(diag(vcov(weighted_model))))
+```
+
+## Part h: Residual Comparison
+
+```{r q1h-residual-comparison}
+# Verify that the weighted and transformed model residuals are the same
+weighted_residuals <- residuals(weighted_model, type = "response") * sqrt(cleaners$Weight)
+transformed_residuals <- residuals(transformed_model)
+residual_difference <- weighted_residuals - transformed_residuals
+cat("Summary of residual differences:\n")
+print(summary(residual_difference))
+all_same <- all(abs(residual_difference) < 1e-10)
+cat("\nAre all residuals essentially the same? ", all_same)
+
+plot(weighted_residuals, transformed_residuals,
+     main = "Weighted vs Transformed Residuals",
+     xlab = "Weighted Residuals", ylab = "Transformed Residuals")
+abline(0, 1, col = "red")
+residual_correlation <- cor(weighted_residuals, transformed_residuals)
+cat("\nCorrelation between residuals: ", residual_correlation)
+```
+
+# Question 2: Logistic Regression
+
+## Part a: Logistic Regression Model
+
+Use logistic function to turn linear predictor into probability:
+
+$$P(Poisonous|Cup\quad Diameter_i)=h({\eta_i})=\frac{1}{1+exp(-{\alpha} -{\beta} * Diameter_i)}$$
+
+## Part b: Odds Ratio Calculation
+
+$$odds\quad ratio=odds(Diameter=10)/odds(Diameter=5) = exp(\beta*(10-5))= exp(5\beta)$$
+The odds ratio for a mushroom with 10 cm cap diameter vs 5 cm cap diameter is 0.8042
+```{r}
+model <- glm(Class ~ Diameter, data = mushrooms, family = binomial)
+summary(model)
+beta <- coef(model)["Diameter"]
+odds_ratio <- exp(beta * 5)
+print(odds_ratio)
+```
+
+
+## Part c: Empirical Relationship Plot
+
+```{r q2c-empirical-plot}
+p1 <- ggplot(mushrooms, aes(x = Diameter, y = as.numeric(Class) - 1)) +
+  geom_jitter(alpha = 0.3, height = 0.05) +
+  scale_y_continuous(breaks = c(0, 1), labels = c("Edible", "Poisonous")) +
+  labs(title = "Relationship between Mushroom Cap Diameter and Class",
+       x = "Cap Diameter (cm)", y = "Class") +
+  theme_minimal()
+
+p2 <- ggplot(mushrooms, aes(x = Diameter, y = as.numeric(Class) - 1)) +
+  geom_smooth(method = "loess", se = TRUE) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Smoothed Probability of Mushroom being Poisonous",
+       x = "Cap Diameter (cm)", y = "Probability of being Poisonous") +
+  theme_minimal()
+
+print(p1)
+print(p2)
+
+summary_data <- mushrooms %>%
+  group_by(Diameter) %>%
+  summarise(prob_poisonous = mean(Class == "poisonous"))
+head(summary_data)
+```
+The probability of being poisonous is higher in the smaller diameter range and decreases with increasing diameter. A minimum is reached in the medium diameter range (about 10-12 cm); thereafter, the toxic probability rises slowly again as the diameter continues to increase. Overall, the smoother is not an s-shaped trend,which is typical shape of logistic regression,indicating the relationship assumed in (a) is not fitted enough.
+
+
+## Part d: Quadratic Logistic Regression
+
+```{r q2d-quadratic-model}
+#fit a new quadratic regression model
+quadratic_model <- glm(Class ~ Diameter + I(Diameter^2), data = mushrooms, family = binomial)
+
+#predict probability of a mushroom being poisonous
+new_data <- data.frame(Diameter = seq(min(mushrooms$Diameter), max(mushrooms$Diameter), length.out = 200))
+new_data$Probability <- predict(quadratic_model, newdata = new_data, type = "response")
+
+#plot
+p <- ggplot(new_data, aes(x = Diameter, y = Probability)) +
+  geom_line() +
+  geom_point(data = mushrooms, aes(y = as.numeric(Class) - 1), alpha = 0.1) +
+  labs(title = "Predicted Probability of Mushroom being Poisonous",
+       x = "Cap Diameter (cm)", 
+       y = "Probability of being Poisonous") +
+  theme_minimal()
+
+print(p)
+summary(quadratic_model)
+```
+The Quadratic Logistic Regression shows a clear non-linear relationship between the cap diameter of a mushroom and its probability of being poisonous. From the S-shaped curve in the plot we know: small diameter mushrooms have a higher probability of being poisonous, and as the diameter increases, the probability drops rapidly to a low point in the medium diameter range and then rises  again. This model fits the trend of the data in the scatterplot better, suggesting it captures the characteristics of the data more accurately than simple linear logistic regression.
+
+## Part e: Predict
+
+```{r q2e-threshold-analysis}
+#round diameters to the nearest half cm
+diameters <- seq(round(min(mushrooms$Diameter) * 2) / 2,
+                 round(max(mushrooms$Diameter) * 2) / 2,
+                 by = 0.5)
+
+#use the rounded diameters to fit a new model.
+pred_data <- data.frame(Diameter = diameters)
+
+#predicted probability of a mushroom being poisonous fall below 50%
+pred_data$Probability <- predict(quadratic_model, newdata = pred_data, type = "response")
+safe_diameters <- pred_data[pred_data$Probability < 0.5, ]
+
+cat("Cap diameters (to nearest 0.5 cm) where predicted probability of being poisonous is below 50%:\n")
+print(safe_diameters$Diameter)
+
+```
